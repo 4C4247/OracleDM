@@ -72,17 +72,23 @@ The images used in our experiment are all from this [dataset](https://drive.goog
 ![OBSR](Repo/entire.jpg)
 
 <h4>Abstract</h4>
-Oracle Bone Inscriptions is the core carrier of Chinese civilization. Super-resolution reconstruction ofOracle Bone Inscriptions images
-is very important for the protection of culturalheritage. Super-resolution reconstruction of Oracle Bone Inscriptions images faces many
-challenges, especially for those Oracle Bone Inscriptions images with complex strokesand serious degradation due to corrosion.
-Under this background, in order to ensure thestructural fidelity of Oracle Bone Inscriptions and realize the high-quality super-resolution
-Oracle Bone Inscriptions image reconstruction, this study proposed the OracleDM model,aiming at restoring the Oracle Bone Inscriptions image
- with realistic style and clear strokes. On the self-built Oracle Bone Inscriptions degradation data set, OracleDM has
-advantages over the existing super-resolution methods in many aspects. Compared with DiffTSR, the PSNR index is increased by 1.97dB, and the SSIM index
- is increased by 0.027. Our model can not only significantly improve the image resolution and visual quality, but also restore more accurate font details
- while maintaining the structure of Oracle Bone Inscriptions’s strokes. This study combines the diffusion model with the prior of ancient Chinese characters,
-providing a new paradigm for digital protection in Oracle Bone Inscriptions and promoting the deep application of deep learning technology in the field of
-cultural heritage.
+Oracle Bone Inscriptions (OBIs) constitute the core carrier of Chinese civilisation, yet their 
+digital preservation is hindered by the low resolution and severe corrosion-induced complex degradation of existing rubbings. This degradation is particularly challenging due to
+the intricate, straight, and broken stroke structures unique to OBI, which existing superresolution methods often misinterpret, leading to stroke adhesion and structural distortion.
+To address these issues, we propose OracleDM, a novel diffusion-based super-resolution
+model designed for high-fidelity OBI reconstruction, aiming to restore OBI images with
+realistic style and clear strokes while ensuring the structural fidelity of inscriptions. Our
+framework integrates a stroke extraction module and a mixture of modalities (MoM)
+module to capture fine-grained stroke information directly from low-resolution images,
+guiding the diffusion process without reliance on annotated font libraries. Evaluated on
+our self-built OBI degradation dataset, OracleDM achieves state-of-the-art performance,
+outperforming the leading DiffTSR method by 1.97 dB in PSNR and 0.027 in SSIM.
+Here we show that our model not only significantly enhances resolution and visual
+quality but also preserves critical stroke topology, ensuring authentic font details while
+maintaining the stroke structure of OBI. This work introduces a new paradigm for the
+digital protection of Oracle Bone Inscriptions by synergising diffusion models with the
+prior knowledge of ancient Chinese characters, thereby facilitating deeper applications
+of deep learning in the field of cultural heritage and humanities. 
 
 ## Visual effect preview
 ![OBSR](Repo/Preview.png)
