@@ -1,4 +1,4 @@
-<h1>Super resolution of Oracle Bone Inscription image based on diffusion model</h1>
+<h1>OracleDM: Preserving Stroke Topology in Diffusion-Based Super-Resolution for Oracle Bone Inscriptions</h1>
 <b>Authors</b>:
 [Shibin Wang]<sup>1</sup>
 | [Beigui Li]<sup>2</sup>
