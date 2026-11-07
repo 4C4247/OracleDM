@@ -65,15 +65,13 @@ python train.py
 python train_stage2.py
 ```
 
-**Stage 3 — edge refinement** (edge-quality and trajectory losses on the model's own DDIM path)
+**Stage 3 — edge refinement**
 
 ```bash
-python train_stage2.py
+python train_stage3.py
 ```
 
 ## How to inference
-
-**Command line** — final reconstruction only needs the Stage 3 checkpoint:
 
 ```bash
 python generate.py
