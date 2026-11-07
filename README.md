@@ -82,15 +82,7 @@ Google Drive (code and pretrained models): https://drive.google.com/drive/my-dri
 
 ## 📚 Datasets
 
-Three evaluation settings are used:
-
-| Setting | Size | Purpose |
-|---|---|---|
-| In-domain subset with HR ground truth | 94 images | Full-reference PSNR/SSIM/Dice and controlled comparison |
-| Held-out unseen glyphs (26 classes) | 96 images | Generalization to characters excluded from training |
-| Real low-resolution rubbings | 1440 images | No-reference structural measures (holes/burr/specks) |
-
-All learning-based baselines are **retrained on the same training data under the same degradation and for the same number of epochs (200)**; only bicubic interpolation is training-free. The raw dataset and reproduction instructions are provided through the project repository (see the Data availability statement in the paper).
+Datasets:Google Drive (code and pretrained models): https://drive.google.com/drive/my-drive
 
 ## 🔎 Overview of OracleDM
 
@@ -105,12 +97,6 @@ Oracle bone inscriptions are among the earliest known Chinese writing systems, b
 ![In-domain qualitative comparison](paper/Paper_Final/figures/fig2_qualitative_indomain.png)
 
 ![Real rubbing reconstruction](paper/Paper_Final/figures/fig3_real_rubbings.png)
-
-### Key results
-
-- **94-image in-domain subset**: 19.699 dB PSNR / 0.909 SSIM / 0.906 Dice, with only 0.08 small holes. Relative to the main baseline DiffTSR, this is **+5.064 dB, +0.134 SSIM and +0.152 Dice**.
-- **96-image held-out set (26 unseen classes)**: 14.378 dB PSNR / 0.824 SSIM / 0.829 Dice, with small holes nearly eliminated.
-- **1440 real rubbings**: solid, coherent, burr-free strokes that match the clean-reference burr level.
 
 ## Citation
 
