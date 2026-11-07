@@ -76,11 +76,7 @@ python train_stage2.py
 **Command line** — final reconstruction only needs the Stage 3 checkpoint:
 
 ```bash
-python generate.py \
-  --input-dir <path/to/low_res_images> \
-  --ckpt outputs/different_stage_final_checkpoint/stage3_final_ep4.pth \
-  --out-dir outputs/results --device cuda \
-  --steps 25 --guidance-scale 1.0 --seed 42
+python generate.py
 ```
 Google Drive (code and pretrained models): https://drive.google.com/drive/my-drive
 
