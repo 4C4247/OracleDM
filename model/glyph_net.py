@@ -1,13 +1,3 @@
-"""Compact grayscale glyph classifier trained on Oracle-241.
-
-The encoder produces:
-  * multi-scale feature maps (used by the Stage2 domain perceptual loss), and
-  * a 256-d pooled feature + class logits (recognition consistency).
-
-GroupNorm is used throughout so it is stable with small batches and under
-autocast; the whole net is deliberately small and fast (runs on a 4080).
-"""
-
 import torch
 import torch.nn as nn
 
@@ -37,20 +27,19 @@ class ConvBlock(nn.Module):
 
 
 class GlyphClassifier(nn.Module):
-    """1ch -> feature maps -> 256-d -> num_classes logits."""
 
     def __init__(self, num_classes=241, feat_dim=256):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(1, 32, 3, padding=1, bias=False), gn(32), nn.SiLU())
-        self.block1 = ConvBlock(32, 32, stride=1)     # 128
-        self.down1 = ConvBlock(32, 64, stride=2)      # 64
+        self.block1 = ConvBlock(32, 32, stride=1)
+        self.down1 = ConvBlock(32, 64, stride=2)
         self.block2 = ConvBlock(64, 64, stride=1)
-        self.down2 = ConvBlock(64, 128, stride=2)     # 32
-        self.block3 = ConvBlock(128, 128, stride=1)   # feature map 32x32
-        self.down3 = ConvBlock(128, 256, stride=2)    # 16
-        self.block4 = ConvBlock(256, 256, stride=1)   # feature map 16x16
-        self.down4 = ConvBlock(256, feat_dim, stride=2)  # 8
+        self.down2 = ConvBlock(64, 128, stride=2)
+        self.block3 = ConvBlock(128, 128, stride=1)
+        self.down3 = ConvBlock(128, 256, stride=2)
+        self.block4 = ConvBlock(256, 256, stride=1)
+        self.down4 = ConvBlock(256, feat_dim, stride=2)
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.head = nn.Sequential(
             nn.Linear(feat_dim, feat_dim), nn.SiLU(),
@@ -63,9 +52,9 @@ class GlyphClassifier(nn.Module):
         x = self.down1(x)
         x = self.block2(x)
         x = self.down2(x)
-        f3 = self.block3(x)               # (B,128,32,32)
+        f3 = self.block3(x)
         x = self.down3(f3)
-        f4 = self.block4(x)               # (B,256,16,16)
+        f4 = self.block4(x)
         x = self.down4(f4)
         return f3, f4, x
 
@@ -75,7 +64,6 @@ class GlyphClassifier(nn.Module):
         return self.head(p)
 
     def features(self, x):
-        """Multi-scale features + pooled vector (for perceptual loss)."""
         f3, f4, f8 = self.feature_maps(x)
         p = self.pool(f8).flatten(1)
         return [f3, f4, p]

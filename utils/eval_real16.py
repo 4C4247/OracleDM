@@ -1,19 +1,3 @@
-# -*- coding: utf-8 -*-
-"""真实 16x16 拓片（OBI_BlackLow，无高清真值）三阶段形态缺陷评估（表 3）+ 图 3。
-
-对 Stage1/2/3 三个定版权重，在同一批真实 16 输入、同一固定初始噪声（seed=42）
-下做 25 步 DDIM，对原始重建结果（不做实心化后处理）统计三类形态缺陷：
-  holes  : 笔画内部 <=12px 的封闭黑色针孔（个/张）
-  burr%  : 3x3 开运算去除的前景占比（边缘毛刺 + 脱落噪点）
-  specks : 距主体、面积 <8px 的脱落前景碎斑（个/张）
-并保存对比网格：
-  real_grid5.png  : 16输入 | bicubic | Stage1 | Stage2 | Stage3
-  fig3.png        : 16输入 | bicubic | Ours(Stage3)  （论文图 3）
-
-服务器用法（在项目根目录）：
-  python eval_real16.py
-可选参数见下方 argparse。
-"""
 import argparse
 import json
 import random
@@ -27,11 +11,11 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data import to_tensor                       # noqa: E402
-from condition import build_condition_from_lr_image  # noqa: E402
-from eval import build_model, count_small_holes  # noqa: E402
-from utils import read_meta, load_ckpt, to_uint8  # noqa: E402
-from glyph_data import normalize_glyph  # noqa: E402
+from data import to_tensor
+from condition import build_condition_from_lr_image
+from eval import build_model, count_small_holes
+from utils import read_meta, load_ckpt, to_uint8
+from glyph_data import normalize_glyph
 
 STAGES = [
     ("Stage1", "stage1_final_ep69.pth"),
@@ -41,7 +25,6 @@ STAGES = [
 
 
 def read_gray(p):
-    """灰度读取（含中文路径回退）。"""
     g = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
     if g is None:
         g = cv2.imdecode(np.fromfile(str(p), dtype=np.uint8),
@@ -50,7 +33,6 @@ def read_gray(p):
 
 
 def burr_ratio(bin_img, k=3):
-    """3x3 开运算去除的前景占比（粗实心笔画保留，细毛刺/碎斑被去除）。"""
     fg = int(bin_img.sum())
     if fg == 0:
         return 0.0
@@ -60,7 +42,6 @@ def burr_ratio(bin_img, k=3):
 
 
 def count_specks(bin_img, max_area=8):
-    """面积 <max_area 的脱落前景碎斑（不含主体）。"""
     n, lab, stats, _ = cv2.connectedComponentsWithStats(bin_img, connectivity=8)
     if n <= 1:
         return 0
@@ -71,8 +52,6 @@ def count_specks(bin_img, max_area=8):
 
 
 def clean_reference(ref_dir, hr_size=128, cap=200):
-    """对干净高清字形（同一 normalize_glyph 口径）统计形态指标，作为无参考
-    指标的"理想地板"，用于解释 burr 在复杂字形上的固有取值。"""
     files = sorted([p for p in Path(ref_dir).rglob("*")
                     if p.suffix.lower() in (".bmp", ".jpg", ".png")])[:cap]
     tb = th = ts = 0
@@ -119,11 +98,11 @@ def main():
     ap.add_argument("--hr-size", type=int, default=128)
     ap.add_argument("--grid-rows", type=int, default=24)
     ap.add_argument("--clean-ref-dir", default="",
-                    help="可选：干净高清字形目录，用于计算理想地板参考")
+                    help="optional clean high-resolution glyph directory for the ideal reference floor")
     ap.add_argument("--random-sample", action="store_true",
-                    help="当 --n 小于总量时，按 seed 跨类随机抽样而非取前 n 张")
+                    help="when --n is below the total, sample across classes by seed instead of taking the first n")
     ap.add_argument("--save-individual", action="store_true",
-                    help="逐张保存 输入|bicubic|Ours 三联图，便于人工挑选代表例")
+                    help="save input|bicubic|Ours triplets per image for manual selection of examples")
     args = ap.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -131,7 +110,7 @@ def main():
     files = sorted([p for p in obi.rglob("*")
                     if p.suffix.lower() in (".jpg", ".jpeg", ".png")])
     if not files:
-        raise SystemExit("未找到图像：%s" % obi)
+        raise SystemExit("no images found: %s" % obi)
     total = len(files)
     if args.n < total:
         if args.random_sample:
@@ -141,12 +120,11 @@ def main():
     n = len(files)
     print("found %d images (pool=%d) under %s" % (n, total, obi), flush=True)
 
-    # 条件包只构建一次（三阶段共用）；同时准备输入/bicubic 视觉
     conds, input_panels, bic_panels = [], [], []
     for f in files:
         x = read_gray(f)
         if x is None:
-            raise SystemExit("读取失败：%s" % f)
+            raise SystemExit("failed to read: %s" % f)
         pack = build_condition_from_lr_image(x, args.hr_size)
         conds.append(to_tensor(pack))
         input_panels.append(cv2.resize(x, (args.hr_size, args.hr_size),
@@ -162,7 +140,6 @@ def main():
         config, ep, _ = read_meta(str(ckpt))
         diff = build_model(config, device)
         load_ckpt(str(ckpt), diff, device)
-        # 每阶段重置生成器到同一种子 -> 初始 DDIM 噪声完全一致，严格配对
         gen = torch.Generator(device=device).manual_seed(args.seed)
         tot_h = tot_b = tot_s = 0
         preds = []
@@ -192,7 +169,7 @@ def main():
             "checkpoint": fn,
             "epoch": ep,
         }
-        print("[%s] holes %.3f/张  burr %.3f%%  specks %.3f/张"
+        print("[%s] holes %.3f/img  burr %.3f%%  specks %.3f/img"
               % (name, tot_h / n, 100.0 * tot_b / n, tot_s / n), flush=True)
         del diff
         torch.cuda.empty_cache()
@@ -201,7 +178,6 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
 
     m = min(args.grid_rows, n)
-    # 5 列网格：输入 | bicubic | s1 | s2 | s3
     rows5 = []
     for i in range(m):
         rows5.append(np.hstack([
@@ -213,7 +189,6 @@ def main():
     p5 = out_dir / "real_grid5.png"
     cv2.imwrite(str(p5), grid5)
 
-    # 图 3：输入 | bicubic | Ours(Stage3)
     rows3 = []
     for i in range(m):
         rows3.append(np.hstack([input_panels[i], bic_panels[i],
@@ -223,7 +198,6 @@ def main():
     p3 = out_dir / "fig3.png"
     cv2.imwrite(str(p3), grid3)
 
-    # 逐张三联图（输入|bicubic|Ours），文件名带序号，便于在资源管理器里人工挑选
     if args.save_individual:
         ind_dir = out_dir / "individual"
         ind_dir.mkdir(parents=True, exist_ok=True)
@@ -237,7 +211,7 @@ def main():
     if args.clean_ref_dir:
         clean_ref = clean_reference(args.clean_ref_dir, args.hr_size)
         if clean_ref:
-            print("[CleanRef] burr %.3f%%  holes %.3f/张  specks %.3f/张"
+            print("[CleanRef] burr %.3f%%  holes %.3f/img  specks %.3f/img"
                   % (clean_ref["burr_pct"], clean_ref["holes_per_img"],
                      clean_ref["specks_per_img"]), flush=True)
 
@@ -250,8 +224,9 @@ def main():
         "steps": args.steps,
         "guidance_scale": 1.0,
         "raw_output_no_solidify": True,
-        "note": "条件包严格从真实16x16输入构建；三阶段同一初始噪声配对；"
-                "holes/burr/specks 为无参考形态缺陷指标。",
+        "note": "condition packs are built strictly from real 16x16 inputs; the three "
+                "stages share the same initial noise; holes/burr/specks are reference-free "
+                "morphological defect metrics.",
         "clean_reference": clean_ref,
         "metrics": results,
     }

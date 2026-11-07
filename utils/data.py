@@ -1,15 +1,3 @@
-"""SkeletonDiff v3 oracle condition datasets.
-
-Each sample pairs a clean HR oracle image with a 4-channel condition pack
-(skeleton, confidence, stroke-width, soft appearance) - see condition.py.
-
-The geometry is taken from the clean HR (teaching ideal geometry, confidence=1)
-or from a degraded upscaled LR (realistic, with a data-driven confidence). The
-appearance always comes from the degraded LR. A random stroke blob is erased
-(completion augmentation) to teach the model to reconstruct missing/merged
-strokes at 16x16. A fraction of conditions are dropped entirely for CFG.
-"""
-
 import random
 from pathlib import Path
 
@@ -30,13 +18,12 @@ def to_tensor(x):
     if x.dtype == np.uint8:
         x = x.astype(np.float32) / 255.0
     t = torch.from_numpy(x).float()
-    if t.ndim == 2:  # grayscale image -> add channel dim
+    if t.ndim == 2:
         t = t.unsqueeze(0)
     return t
 
 
 def degrade_to_lr16(hr_tensor, degrade, lr_size, deterministic=False):
-    """HR tensor (1,H,W) -> LR float [0,1] array (lr_size,lr_size)."""
     with torch.no_grad():
         lr = degrade.to_lr(hr_tensor.unsqueeze(0), target_size=lr_size,
                            deterministic=deterministic)[0, 0]

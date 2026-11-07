@@ -1,13 +1,3 @@
-"""Gaussian diffusion with DDIM sampling, CFG and structural losses.
-
-Pixel-space diffusion that renders an oracle glyph from a skeleton condition.
-In addition to the standard noise-prediction objective, training adds a
-timestep-weighted structural loss (edge + foreground occupancy + skeleton
-centerline) that is active near x0, sharpening stroke detail and pinning the
-generated glyph to the supplied skeleton. Sampling uses DDIM with optional
-classifier-free guidance.
-"""
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,36 +58,21 @@ class SkeletonDiffusion(nn.Module):
         return x - F.conv2d(x, gk, padding=k // 2)
 
     def edge_quality_loss(self, x0_pred, x0, hf_sigma=1.5, hf_k=5):
-        """Crisp, correctly-placed edges without burrs (Stage3).
-
-        Two terms on the binary line drawing:
-          * Sobel boundary L1 aligns the predicted contour to the clean target
-            (sharpening thin strokes to their true shape instead of chunks);
-          * high-frequency residual L1 penalizes sub-pixel spiky texture
-            (burrs) that the clean target does not have. Genuine strokes are
-            lower-frequency at 128px and survive; 1-2px spikes do not.
-        """
         edge = F.l1_loss(self._sobel(x0_pred), self._sobel(x0))
         hf = F.l1_loss(self._highpass(x0_pred, hf_sigma, hf_k),
                        self._highpass(x0, hf_sigma, hf_k))
         return edge + hf
 
     def structural_loss(self, x0_pred, x0, cond, t):
-        """Edge + occupancy + confidence-gated skeleton-centerline loss."""
         w = (1.0 - t.float() / self.timesteps) ** self.struct_power
         w = w[:, None, None, None]
 
-        # edge / stroke detail (whole image, incl. completion regions)
         edge = (w * (self._sobel(x0_pred) - self._sobel(x0)).abs()).mean()
 
-        # soft foreground occupancy (logits form is autocast-safe)
         logits = (x0_pred - 0.5) * 10.0
         occ = (w * F.binary_cross_entropy_with_logits(
             logits, x0.clamp(0.0, 1.0), reduction="none")).mean()
 
-        # skeleton centerline must be foreground, but ONLY where the skeleton is
-        # reliable (conf gating). cond channels: [sk, conf, width, app].
-        # Low-conf / erased regions are left free for the model to complete.
         sk = (cond[:, 0:1] > 0.5).float()
         conf = cond[:, 1:2].clamp(0.0, 1.0)
         wgt = w * sk * conf
@@ -109,24 +84,8 @@ class SkeletonDiffusion(nn.Module):
     def trajectory_loss(self, x0, cond, step=40, k_lo=1, k_hi=4,
                         t_anchor=40, w_x0=1.0, w_fill=1.0, subset=16,
                         w_edge=0.0):
-        """Trajectory-consistency loss at the end of the DDIM chain.
-
-        Single-step x0 supervision sees ideal Gaussian noise (q_sample), but at
-        inference the last denoising steps are fed the model's OWN partly
-        denoised states (exposure bias). Those states carry the high-frequency
-        texture / pinholes that a one-step loss never sees. This method runs
-        the model's own eta=0 DDIM chain (intermediate steps no-grad) from a
-        low-t q-sampled state down to a low-t anchor, then supervises the
-        final x0 estimate (with grad) on that model-produced state. It directly
-        teaches the model to emit solid strokes along its own sampling path.
-
-        Cheap by design: only a small `subset` of the batch is rolled, and the
-        roll is short (k_lo..k_hi no-grad steps), because solidity is set in
-        the very last few steps (the final output ~= x0_pred at t=40).
-        """
         dev = x0.device
         r = min(subset, x0.shape[0])
-        # random subset each step so every image is eventually covered
         idx = torch.randperm(x0.shape[0], device=dev)[:r]
         x0 = x0[idx]
         cond = cond[idx]
@@ -137,7 +96,6 @@ class SkeletonDiffusion(nn.Module):
         ts = torch.full((b,), t_start, device=dev, dtype=torch.long)
         x = self.q_sample(x0, ts, torch.randn_like(x0))
 
-        # roll down the model's own chain (no grad) to the anchor state
         with torch.no_grad():
             cur = t_start
             while cur > t_anchor:
@@ -149,7 +107,6 @@ class SkeletonDiffusion(nn.Module):
                 x = torch.sqrt(a_prev) * x0p + torch.sqrt(1.0 - a_prev) * eps
                 cur = nxt
 
-        # final anchored denoising step WITH grad -> the final clean estimate
         tb = torch.full((b,), t_anchor, device=dev, dtype=torch.long)
         eps = self.model(x, tb, cond)
         x0_pred = self.predict_x0(x, tb, eps)
@@ -162,7 +119,6 @@ class SkeletonDiffusion(nn.Module):
             miss = (x0 - x0_pred).clamp(min=0.0)
             loss = loss + w_fill * (
                 (miss * fg).sum() / fg.sum().clamp(min=1.0))
-        # Stage3: clean, crisp edges on the model's own low-t path (burrs).
         if w_edge > 0.0:
             loss = loss + w_edge * self.edge_quality_loss(x0_pred, x0)
         return loss
@@ -182,39 +138,27 @@ class SkeletonDiffusion(nn.Module):
         struct_loss = self.structural_loss(x0_pred, x0, cond, t)
         total = noise_loss + struct_loss
 
-        # All clean-image (x0) losses are only applied at low t, where the
-        # predicted clean image is meaningful.
         if (glyph is not None and (w_perc > 0.0 or w_rec > 0.0)) \
                 or w_x0 > 0.0 or w_fill > 0.0:
             low = t < perc_max_t
             if low.any():
                 xp, xt = x0_pred[low], x0[low]
 
-                # Stage2: domain perceptual + recognition consistency.
                 if glyph is not None and w_perc > 0.0:
                     total = total + w_perc * glyph.perceptual(xp, xt)
                 if glyph is not None and w_rec > 0.0 and labels is not None:
                     total = total + w_rec * glyph.recognition(
                         xp, labels[low])
 
-                # Stage2.5: direct clean-image fidelity (constant-gradient L1,
-                # unlike the saturating occupancy BCE) -> recovers PSNR and
-                # drives the interior toward the solid target.
                 if w_x0 > 0.0:
                     total = total + w_x0 * F.l1_loss(xp, xt)
 
-                # Stage2.5: foreground coverage (solid strokes). One-sided,
-                # normalized over target-foreground pixels, so it is NOT diluted
-                # by the large background. It only fires where the TARGET is a
-                # stroke, so it can fill holes but can never hallucinate.
                 if w_fill > 0.0:
                     fg = (xt > 0.5).float()
                     miss = (xt - xp).clamp(min=0.0)
                     total = total + w_fill * (
                         (miss * fg).sum() / fg.sum().clamp(min=1.0))
 
-        # Stage2.6: trajectory-consistency solidity (model's own DDIM path).
-        # The trajectory uses fixed unit x0/fill weights; w_roll is its knob.
         if w_roll > 0.0:
             total = total + w_roll * self.trajectory_loss(
                 x0, cond, k_lo=roll_k_lo, k_hi=roll_k_hi,
@@ -237,7 +181,6 @@ class SkeletonDiffusion(nn.Module):
         b = cond.shape[0]
         size = cond.shape[-1]
 
-        # evenly spaced timestep subset
         step = self.timesteps // num_steps
         timesteps = torch.arange(0, self.timesteps, step, device=device).flip(0)
 
@@ -255,7 +198,6 @@ class SkeletonDiffusion(nn.Module):
 
             x0_pred = self.predict_x0(x, t_batch, eps)
 
-            # DDIM deterministic (eta=0) update
             x = torch.sqrt(ac_prev) * x0_pred + torch.sqrt(
                 1 - ac_prev) * eps
         return x.clamp(0.0, 1.0)

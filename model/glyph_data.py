@@ -1,14 +1,3 @@
-"""Oracle-241 glyph dataset for the Stage2 glyph encoder.
-
-Reads the *extracted* Oracle-241 archives:
-    handprint/<range>/<6-digit class>/<file>.bmp   (clean 500x500)
-    scan/scanned/<6-digit class>/<file>.bmp        (real rubbings, variable)
-
-Both are white-glyph on a dark background. Images are normalised to a fixed
-white-on-black canvas, thresholded (Otsu) to suppress rubbing grain, centred on
-the glyph bbox, and given a constant class index (sorted 6-digit code).
-"""
-
 import json
 import random
 from pathlib import Path
@@ -19,12 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 
-# ---------------------------------------------------------------------------
-# normalisation
-# ---------------------------------------------------------------------------
-
 def _drop_grain(bin_img, min_comp_frac=0.0025):
-    """Drop tiny connected components (rubbing grain), keep glyph parts."""
     n, lab, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
     if n <= 1:
         return bin_img
@@ -38,13 +22,6 @@ def _drop_grain(bin_img, min_comp_frac=0.0025):
 
 
 def _drop_solid_border(bin_img, margin=2, dens_thr=0.62):
-    """Remove *solid* components touching the image border.
-
-    A glyph stroke is a thin network (low fill density inside its bbox); a
-    rubbing flare / crack / white edge is a solid block. We only remove border
-    components that are solid, so thin strokes that genuinely reach the crop
-    edge are preserved.
-    """
     h, w = bin_img.shape
     n, lab, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
     if n <= 1:
@@ -71,8 +48,6 @@ def _drop_solid_border(bin_img, margin=2, dens_thr=0.62):
 
 
 def glyph_quality(norm, dens_thr=0.62, min_fill=0.01, max_fill=0.42):
-    """Return True if a normalised glyph looks like a stroke network, not a
-    solid rubbing flare. Used to reject hopeless scans."""
     fg = (norm > 0)
     fill = fg.mean()
     if not (min_fill <= fill <= max_fill):
@@ -95,11 +70,6 @@ def _bbox_gap(a, b):
 
 
 def _glyph_cluster(bin_img, radius_frac=0.28):
-    """Keep the largest component and every component within a radius of it.
-
-    Drops far rubbing flares / cracks / extra glyphs that slipped past border
-    removal.
-    """
     n, lab, stats, _ = cv2.connectedComponentsWithStats(bin_img, 8)
     if n <= 2:
         return bin_img
@@ -118,18 +88,14 @@ def _glyph_cluster(bin_img, radius_frac=0.28):
 
 
 def normalize_glyph(gray, size=128, frac=0.86, despeckle=True):
-    """Threshold -> bbox-crop -> aspect-ratio-preserving fit -> centred canvas."""
     g = gray
     if g.ndim == 3:
         g = cv2.cvtColor(g, cv2.COLOR_BGR2GRAY)
     g = g.astype(np.float32)
 
-    # robust white-on-dark orientation: bright majority is glyph; if the image
-    # is mostly bright (dark glyph on light), invert.
     if np.median(g) > 127:
         g = 255.0 - g
 
-    # Otsu on the (possibly inverted) dark-background image.
     gu = np.clip(g, 0, 255).astype(np.uint8)
     _, b = cv2.threshold(gu, 0, 255,
                          cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -144,7 +110,6 @@ def normalize_glyph(gray, size=128, frac=0.86, despeckle=True):
 
     ys, xs = np.where(b > 0)
     if len(xs) == 0:
-        # degenerate (empty glyph): fall back to centre crop of the raw image
         b = gu
         ys, xs = np.where(b > 0)
         if len(xs) == 0:
@@ -165,10 +130,6 @@ def normalize_glyph(gray, size=128, frac=0.86, despeckle=True):
     canvas[y:y + nh, x:x + nw] = crop
     return canvas
 
-
-# ---------------------------------------------------------------------------
-# indexing
-# ---------------------------------------------------------------------------
 
 def _code_from_path(p):
     name = p.replace("\\", "/")
@@ -194,7 +155,6 @@ def handprint_files(root):
 
 def build_index(handprint_root=None, scan_root=None, seed=42,
                 val_frac=0.15):
-    """Return {class_code: idx}, and train/val [(path, idx), domain] lists."""
     items = []
     if scan_root:
         for f, c in scan_files(scan_root):
@@ -206,7 +166,6 @@ def build_index(handprint_root=None, scan_root=None, seed=42,
     codes = sorted({c for _, c, _ in items})
     code2idx = {c: i for i, c in enumerate(codes)}
 
-    # stratified per-class split, deterministic
     rng = random.Random(seed)
     by_class = {}
     for it in items:
@@ -224,8 +183,6 @@ def build_index(handprint_root=None, scan_root=None, seed=42,
 
 
 def filter_valid(items, size=128, verbose=False):
-    """Drop hopeless scans (merged rubbing flares / empty crops) by normalising
-    once and applying the glyph quality gate."""
     kept = []
     n_bad = 0
     n_empty = 0
@@ -247,10 +204,6 @@ def filter_valid(items, size=128, verbose=False):
     return kept
 
 
-# ---------------------------------------------------------------------------
-# dataset
-# ---------------------------------------------------------------------------
-
 class GlyphDataset(Dataset):
     def __init__(self, items, size=128, train=False):
         self.items = items
@@ -262,12 +215,10 @@ class GlyphDataset(Dataset):
 
     def _augment(self, img):
         s = self.size
-        # rotation
         ang = random.uniform(-8, 8)
         M = cv2.getRotationMatrix2D((s / 2, s / 2), ang, 1.0)
         img = cv2.warpAffine(img, M, (s, s), flags=cv2.INTER_NEAREST,
                              borderValue=0)
-        # scale / translation
         sc = random.uniform(0.9, 1.1)
         nw = nh = int(round(s * sc))
         zoom = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_NEAREST)
@@ -283,7 +234,6 @@ class GlyphDataset(Dataset):
             y0 = int(np.clip(y0, 0, s - nh))
             canvas[y0:y0 + nh, x0:x0 + nw] = zoom
             img = canvas
-        # stroke morph / noise (mimic rubbings)
         if random.random() < 0.3:
             k = random.choice([2, 3])
             if random.random() < 0.5:

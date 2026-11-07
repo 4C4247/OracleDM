@@ -1,24 +1,3 @@
-"""条件模块消融（对应论文 4.7 / 表5）。
-
-思路：网络结构完全不变（CondUNet 与参数量所有配置一致，保证公平），
-只在训练/验证时把指定的条件通道置为中性值 0（与代码里 CFG drop 的
-zeros_like 同口径），统一在 Stage1 基础损失（噪声 MSE + 结构损失）上
-训练少量小模型，串行跑完所有配置并自动汇总。
-
-配置：
-  full           完整 4 通道（对照）
-  no_geom        骨架 sk + 置信度 conf 置 0（几何编码器无输入）
-  no_app         宽度 width + 外观 app 置 0（外观编码器无输入）
-  no_conf        置信度 conf 置 0
-  no_width       宽度 width 置 0
-  no_completion  关闭随机补全增强（comp_prob=0）
-
-用法（服务器项目根）：
-  python ablation_cond.py --train-dir /root/autodl-tmp/train \
-      --val-dir /root/autodl-tmp/val --device cuda
-规模可用 --n-train / --epochs 调整（默认小模型、少数据，省钱）。
-"""
-
 import argparse
 import json
 import time
@@ -37,7 +16,6 @@ from degradation import OracleDegradation
 from condition import build_condition
 from utils import psnr, ssim_batch, dice_batch
 
-# (标签, 需置0的通道索引, 补全增强概率)
 CONFIGS = [
     ("full",          [],  0.3),
     ("no_geom",    [0, 1],  0.3),
@@ -49,7 +27,6 @@ CONFIGS = [
 
 
 def neutralize(cond, channels):
-    """把指定条件通道在所有样本上置 0；其余通道保持不变。"""
     if not channels:
         return cond
     out = cond.clone()
@@ -94,7 +71,7 @@ def main():
     ap.add_argument("--hr-size", type=int, default=128)
     ap.add_argument("--lr-size", type=int, default=16)
     ap.add_argument("--n-train", type=int, default=2000,
-                    help="每个配置使用的训练图数量（小子集省钱）")
+                    help="number of training images per configuration (small subset)")
     ap.add_argument("--epochs", type=int, default=15)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=1e-4)
@@ -109,24 +86,19 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device)
-    # 服务器支持 bf16（与 train.py 一致）；老卡不支持则回退 fp32，仅用于本地冒烟
     use_bf16 = device.type == "cuda" and torch.cuda.is_bf16_supported()
     print("bf16 autocast:", use_bf16)
     degrade = OracleDegradation()
 
-    # 固定验证集（所有配置共用，评估时再按配置中性化）
     val_files = sorted(Path(args.val_dir).glob("*.jpg"))[:args.val_n]
     val_x0, val_cond_full = build_val_batch(
         val_files, args.hr_size, args.lr_size, degrade)
 
     results = []
     for tag, zero_ch, comp_prob in CONFIGS:
-        print("\n############################################################")
-        print("### 条件消融配置: %s  置0通道=%s  comp_prob=%.1f"
-              % (tag, zero_ch if zero_ch else "无", comp_prob))
-        print("############################################################")
+        print("condition ablation: %s, zeroed channels=%s, comp_prob=%.1f"
+              % (tag, zero_ch if zero_ch else "none", comp_prob))
 
-        # 每个配置重置种子并重建模型 -> 初始权重完全相同，公平可比
         torch.manual_seed(args.seed)
         model = CondUNet(1, 1, geom_ch=2, app_ch=2, base_ch=64,
                          ch_mult=(1, 2, 2, 4), num_res_blocks=2)
@@ -175,7 +147,6 @@ def main():
                   % (ep, running / max(1, nb), skipped, time.time() - t0),
                   flush=True)
 
-        # 验证条件按同一配置中性化
         val_cond = neutralize(val_cond_full, zero_ch)
         p, s, d, pred = evaluate(diff, val_x0, val_cond,
                                  args.sample_steps, device)
@@ -185,7 +156,6 @@ def main():
                         "psnr": round(p, 3), "ssim": round(s, 3),
                         "dice": round(d, 3)})
 
-        # 保存该配置的验证预测网格（target | pred 交错），省磁盘不存权重
         from utils import to_uint8
         rows = []
         u = to_uint8(pred)
@@ -198,9 +168,8 @@ def main():
                   encoding="utf-8") as fh:
             json.dump(results, fh, ensure_ascii=False, indent=2)
 
-    # 汇总 Markdown 表
-    print("\n================ 条件消融汇总（表5） ================")
-    print("| 配置 | PSNR↑ | SSIM↑ | Dice↑ |")
+    print("\n================ condition ablation summary (Table 5) ================")
+    print("| configuration | PSNR | SSIM | Dice |")
     print("|---|---|---|---|")
     for r in results:
         print("| %s | %.3f | %.3f | %.3f |"

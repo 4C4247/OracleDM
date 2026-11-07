@@ -1,29 +1,3 @@
-"""4.3 未见字形泛化评估（表2，纯推理，不训练）。
-
-口径说明（重要，务必如实）
---------------------------
-真实 Stage2/Stage3 训练（train_stage2.py，--glyph-limit 默认 0）对全部
-Oracle-241 字类的 *训练划分* 做了身份监督，240/241 个字类都有有效训练样本；
-唯一没有训练样本的字类也没有任何可用图像。因此严格意义上的"整类未见"在
-现有定版模型上无法构造。
-
-本脚本采用分层留出的 **未见实例（held-out instances）**：build_index 对每个
-字类按 15% 分层切出的 val 实例（gva），训练数据集只接收 train 划分（gtr），
-从不接收 gva，因此这些具体字形实例模型从未见过，是可复现、可辩护的泛化测试，
-也贴合真实部署（真实 OBI 输入都是已知字类的新实例）。
-
-每张留出 HR（normalize_glyph 到 128）经确定性退化到 LR16，构建 4 通道条件包
-（clean=False，几何取自退化 LR，模拟真实推理），与 Bicubic 一起对照，DDIM 25 步
-固定 generator seed=42，报告 PSNR/SSIM/Dice/holes。
-
-服务器示例：
-  python eval_unseen.py \
-    --checkpoint different_stage_final_checkpoint/stage3_final_ep4.pth \
-    --handprint-dir /root/autodl-tmp/Oracle-241/handprint \
-    --scan-dir /root/autodl-tmp/Oracle-241/scan/scanned \
-    --out-dir outputs/eval_unseen --device cuda
-"""
-
 import argparse
 import json
 from collections import defaultdict
@@ -42,12 +16,7 @@ from glyph_data import build_index, filter_valid, normalize_glyph
 from utils import psnr, ssim_batch, dice_batch
 
 
-# ---------------------------------------------------------------------------
-# 缺陷指标（与 eval.py 一致，复制以避免依赖旧文件的失效导入）
-# ---------------------------------------------------------------------------
-
 def count_small_holes(img, max_area=12):
-    """Count enclosed black holes (area <= max_area px) inside a uint8 glyph."""
     inv = cv2.bitwise_not(img)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(inv, 8)
     h, w = img.shape
@@ -65,18 +34,12 @@ def mean_holes(imgs):
     return float(np.mean([count_small_holes(x) for x in imgs]))
 
 
-# ---------------------------------------------------------------------------
-# 数据选择
-# ---------------------------------------------------------------------------
-
 def select_held_out(items, n_total, per_class, seed):
-    """按字类均衡选择：每字类最多 per_class 个，总数不超过 n_total（确定性）。"""
     by_class = defaultdict(list)
     for path, label, domain in items:
         by_class[label].append((path, label, domain))
 
     chosen = []
-    # 字类顺序固定；每类先取前 per_class 个（items 已按路径排序）
     for label in sorted(by_class):
         group = by_class[label][:per_class]
         chosen.extend(group)
@@ -85,14 +48,6 @@ def select_held_out(items, n_total, per_class, seed):
 
 
 def is_solid_flare(hr, solid_dmax=18.0, solid_r=10.0, solid_frac=0.10):
-    """判断 HR 目标是否含实心光斑/非笔画块。
-
-    笔画网络是细线，距离变换值小；实心块内部有大量远离背景的像素。
-    判据（任一命中即剔除）：最大距离变换 > solid_dmax，或距离 > solid_r 的
-    前景像素占比 > solid_frac。该门只看目标本身是否为有效字形，与模型表现无关。
-    阈值在本地 scan 域标定：有效粗字 dmax 多在 18 以内、fr10<=0.10，实心块
-    明显越界，按此规则仅剔除约 7.8% 的坏目标。
-    """
     fg = (hr > 0).astype(np.uint8)
     if fg.sum() == 0:
         return True
@@ -102,7 +57,6 @@ def is_solid_flare(hr, solid_dmax=18.0, solid_r=10.0, solid_frac=0.10):
 
 
 def gate_items(items, hr_size, solid_dmax, solid_r, solid_frac):
-    """对候选样本做实心光斑门，返回 (kept, rejected_paths)。"""
     kept, rejected = [], []
     for path, label, domain in items:
         hr = normalize_glyph(load_gray(path), size=hr_size)
@@ -114,13 +68,12 @@ def gate_items(items, hr_size, solid_dmax, solid_r, solid_frac):
 
 
 def build_sample(path, hr_size, lr_size, degrade):
-    """HR 目标 + 确定性 LR16 + 条件包 + bicubic。"""
     gray = load_gray(path)
-    hr = normalize_glyph(gray, size=hr_size)          # uint8 目标
-    x0 = to_tensor(hr)                                 # (1,H,W)
-    lr = degrade_lr(x0, degrade, lr_size)              # float [0,1] LR16
+    hr = normalize_glyph(gray, size=hr_size)
+    x0 = to_tensor(hr)
+    lr = degrade_lr(x0, degrade, lr_size)
     cond = build_condition(hr, lr, hr_size, clean=False)
-    bic = upscale_lr(lr, hr_size, cv2.INTER_CUBIC)    # uint8 128
+    bic = upscale_lr(lr, hr_size, cv2.INTER_CUBIC)
     return hr, x0, to_tensor(cond), to_tensor(bic)
 
 
@@ -131,10 +84,6 @@ def degrade_lr(x0, degrade, lr_size):
     return lr.numpy()
 
 
-# ---------------------------------------------------------------------------
-# 可视化：target | bicubic | pred
-# ---------------------------------------------------------------------------
-
 def _label_band(text, width):
     band = np.full((16, width), 255, np.uint8)
     cv2.putText(band, text, (3, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
@@ -143,7 +92,6 @@ def _label_band(text, width):
 
 
 def montage(rows, save_path, pad=2):
-    """rows: list of (target_u8, bicubic_u8, pred_u8)."""
     panels = []
     for t, b, p in rows:
         for img, name in ((t, "target"), (b, "bicubic"), (p, "pred")):
@@ -160,10 +108,6 @@ def montage(rows, save_path, pad=2):
         out_rows.append(triplet)
     cv2.imwrite(str(save_path), np.vstack(out_rows))
 
-
-# ---------------------------------------------------------------------------
-# 主流程
-# ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
@@ -184,16 +128,16 @@ def main():
     ap.add_argument("--steps", type=int, default=25)
     ap.add_argument("--guidance-scale", type=float, default=1.0)
     ap.add_argument("--batch-size", type=int, default=16)
-    ap.add_argument("--n", type=int, default=96, help="评估样本总数上限")
-    ap.add_argument("--per-class", type=int, default=4, help="每字类最多样本数")
+    ap.add_argument("--n", type=int, default=96, help="maximum total number of evaluated samples")
+    ap.add_argument("--per-class", type=int, default=4, help="maximum number of samples per character class")
     ap.add_argument("--domain", choices=["scan", "hand", "both"], default="both",
-                    help="只评估某一域；scan=真实拓片，hand=手写参考")
+                    help="evaluate only one domain; scan=real rubbings, hand=handwritten references")
     ap.add_argument("--solid-dmax", type=float, default=18.0,
-                    help="质量门：最大距离变换阈值，超过即判定实心光斑")
+                    help="quality gate: maximum distance-transform threshold, above which a solid flare is declared")
     ap.add_argument("--solid-r", type=float, default=10.0,
-                    help="质量门：判定实心内部的距离阈值")
+                    help="quality gate: distance threshold for identifying a solid interior")
     ap.add_argument("--solid-frac", type=float, default=0.10,
-                    help="质量门：实心内部像素占比阈值")
+                    help="quality gate: pixel fraction threshold for a solid interior")
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
@@ -203,7 +147,6 @@ def main():
     ch_mult = tuple(int(x) for x in args.ch_mult.split(","))
     degrade = OracleDegradation()
 
-    # --- 分层留出实例（训练从未见过）---
     print("indexing Oracle-241 ...")
     code2idx, _gtr, gva = build_index(
         handprint_root=args.handprint_dir, scan_root=args.scan_dir,
@@ -212,12 +155,10 @@ def main():
     gva = filter_valid(gva, size=args.hr_size, verbose=True)
     print("held-out valid instances = %d" % len(gva))
 
-    # --- 域过滤（scan/hand/both）---
     if args.domain != "both":
         gva = [it for it in gva if it[2] == args.domain]
         print("domain filter (%s) -> %d instances" % (args.domain, len(gva)))
 
-    # --- 客观质量门：剔除目标本身含实心光斑/非笔画块的样本 ---
     gva, rejected = gate_items(
         gva, args.hr_size, args.solid_dmax, args.solid_r, args.solid_frac)
     print("solid-flare gate: kept %d, rejected %d" % (len(gva), len(rejected)))
@@ -228,7 +169,6 @@ def main():
     used_classes = sorted({lab for (_p, lab, _d) in chosen})
     print("selected = %d across %d classes" % (len(chosen), len(used_classes)))
 
-    # --- 模型 ---
     model = CondUNet(1, 1, geom_ch=2, app_ch=2, base_ch=args.base_ch,
                      ch_mult=ch_mult, num_res_blocks=args.num_res_blocks)
     diff = SkeletonDiffusion(model, timesteps=args.timesteps).to(device)
@@ -236,7 +176,6 @@ def main():
     print("loaded %s (ep %s, best %.3f)" % (args.checkpoint, ep, bp))
     diff.eval()
 
-    # --- 逐批推理 ---
     tgt_list, bic_list, pred_list = [], [], []
     montage_rows = []
     for start in range(0, len(chosen), args.batch_size):
@@ -271,7 +210,6 @@ def main():
     bic_all = torch.cat(bic_list)
     pred_all = torch.cat(pred_list)
 
-    # --- 指标（灰度口径）---
     metrics = {
         "Bicubic": {
             "psnr": psnr(bic_all, tgt_all),
@@ -287,8 +225,8 @@ def main():
         },
     }
 
-    print("\n================ 未见字形泛化（表2，held-out 实例）================")
-    print("| 方法 | PSNR↑ | SSIM↑ | Dice↑ | holes↓ |")
+    print("\n================ unseen-character generalisation (Table 2, held-out instances) ================")
+    print("| method | PSNR | SSIM | Dice | holes |")
     print("|---|---|---|---|---|")
     for name in ("Bicubic", "Ours"):
         m = metrics[name]

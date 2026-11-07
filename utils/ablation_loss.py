@@ -1,30 +1,3 @@
-"""损失函数消融（对应论文 4.8 / 表6，完整模型版本）。
-
-思路：所有配置都从同一个已训好的 Stage1 权重 warm start（相同起点、
-公平），用较小学习率统一微调相同轮数，只逐级打开训练损失，串行跑完
-并自动汇总。使用 Stage2 混合数据集（合成对 + Oracle-241 标签字形）
-与冻结的字形编码器（glyph，241 类，非 VGG）。这与真实 Stage2
-训练（train_stage2.py）一致，避免从零训练时损失项越多越难收敛的偏差。
-
-本版在原"简单合成 GT 验证集"之外，新增**领域专属的真实甲骨拓片评估**
-（OBI_BlackLow_64，无 GT），用与课题目标直接对应的无参考形态指标
-holes / burr / specks 做固定图像、固定噪声的配对比较；同时把每个配置
-的 checkpoint 存到 outputs/ablation_loss/ckpts，便于事后单独复评。
-
-逐级叠加（每一级都包含前一级的全部损失）：
-  mse_only     仅噪声 MSE
-  struct       + 结构损失（edge + occupancy + confidence-gated skeleton）
-  perc_rec     + 字形感知 + 识别一致性（perceptual + recognition）
-  x0_fill_roll + 低 t L1 + 前景覆盖 + 轨迹一致性（模型自身 DDIM 路径）
-  edge         + 边缘质量（轨迹路径上 Sobel + 高通，去毛刺，完整）
-
-用法（服务器项目根）：
-  python ablation_loss.py --train-dir /root/autodl-tmp/train \
-      --val-dir /root/autodl-tmp/val --device cuda
-规模可用 --n-train / --epochs / --glyph-limit 调整（默认小模型、省钱）。
-真实拓片目录用 --obi-dir 改，数量用 --real-n 改。
-"""
-
 import argparse
 import json
 import random
@@ -50,8 +23,6 @@ from utils import (psnr, ssim_batch, dice_batch, to_uint8, load_ckpt,
 from eval import count_small_holes
 from eval_real import burr_ratio, count_specks
 
-# (标签, 结构权重(w_edge,w_occ,w_skel), w_perc, w_rec,
-#  w_x0, w_fill, w_roll, roll_w_edge)
 LOSS_CONFIGS = [
     ("mse_only",     (0.0, 0.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
     ("struct",       (0.5, 0.5, 0.5), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
@@ -77,7 +48,6 @@ def build_val_batch(files, hr_size, lr_size, degrade):
 
 
 def defect_metrics(pred):
-    """对预测 batch 计算 holes/burr/specks 均值（raw 扩散输出，阈值127）。"""
     u = to_uint8(pred)
     th = tb = ts = 0.0
     for i in range(u.shape[0]):
@@ -108,7 +78,6 @@ def evaluate(diff, x0, cond, steps, device, batch_size=8):
 @torch.no_grad()
 def evaluate_real(diff, real_files, steps, device, hr_size, seed,
                   batch_size=16):
-    """真实甲骨拓片（无 GT）的无参考形态指标，固定图像+固定噪声配对。"""
     diff.eval()
     gen = torch.Generator(device=device).manual_seed(seed)
     tot_h = tot_b = tot_s = 0
@@ -154,18 +123,18 @@ def main():
                     default="outputs/glyph_encoder/glyph_encoder.pth")
     ap.add_argument("--stage1-ckpt",
                     default="different_stage_final_checkpoint/stage1_final_ep69.pth",
-                    help="所有配置共同的 Stage1 起点（warm start）")
+                    help="common Stage1 starting point for all configurations (warm start)")
     ap.add_argument("--obi-dir", default="/root/autodl-tmp/OBI_BlackLow_64",
-                    help="真实甲骨拓片目录（无 GT，领域评估）")
+                    help="real oracle rubbing directory (no GT, in-domain evaluation)")
     ap.add_argument("--out-dir", default="outputs/ablation_loss")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--num-classes", type=int, default=241)
     ap.add_argument("--hr-size", type=int, default=128)
     ap.add_argument("--lr-size", type=int, default=16)
     ap.add_argument("--n-train", type=int, default=2000,
-                    help="合成训练图数量上限（小子集省钱）")
+                    help="maximum number of synthetic training images (small subset)")
     ap.add_argument("--glyph-limit", type=int, default=400,
-                    help="标签字形样本池上限")
+                    help="maximum size of the labelled glyph sample pool")
     ap.add_argument("--epochs", type=int, default=10)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lr", type=float, default=3e-5)
@@ -175,7 +144,7 @@ def main():
     ap.add_argument("--sample-steps", type=int, default=25)
     ap.add_argument("--val-n", type=int, default=64)
     ap.add_argument("--real-n", type=int, default=94,
-                    help="真实拓片评估张数（固定子集，所有配置相同）")
+                    help="number of real rubbings for evaluation (fixed subset, identical across configurations)")
     ap.add_argument("--real-batch", type=int, default=16)
     ap.add_argument("--num-workers", type=int, default=4)
     ap.add_argument("--roll-subset", type=int, default=16)
@@ -191,7 +160,6 @@ def main():
     print("bf16 autocast:", use_bf16)
     degrade = OracleDegradation()
 
-    # --- 标签字形索引（只做一次）---
     print("indexing Oracle-241 ...")
     code2idx, gtr, _ = build_index(
         handprint_root=args.handprint_dir, scan_root=args.scan_dir,
@@ -201,7 +169,6 @@ def main():
         gtr = gtr[:args.glyph_limit]
     print("labelled glyph pool = %d" % len(gtr))
 
-    # --- 混合数据集（截断到小模型规模，所有配置共用）---
     ds = Stage2Dataset(args.train_dir, gtr, hr_size=args.hr_size,
                        lr_size=args.lr_size, glyph_ratio=args.glyph_ratio,
                        train=True, seed=args.seed)
@@ -214,17 +181,14 @@ def main():
     print("mixed epoch size: %d (synth %d + labelled %d)"
           % (len(ds), ds.n_synth, ds.n_glyph))
 
-    # --- 冻结字形编码器 ---
     glyph = GlyphPerceptual(args.glyph_encoder,
                             num_classes=args.num_classes, device=device)
     print("glyph encoder loaded (%d classes)" % args.num_classes)
 
-    # --- 固定简单 GT 验证集（所有配置共用）---
     val_files = sorted(Path(args.val_dir).glob("*.jpg"))[:args.val_n]
     val_x0, val_cond = build_val_batch(
         val_files, args.hr_size, args.lr_size, degrade)
 
-    # --- 固定真实拓片子集（所有配置共用，无 GT）---
     real_rng = random.Random(args.seed)
     all_real = sorted(Path(args.obi_dir).glob("*.jpg"))
     if not all_real:
@@ -236,9 +200,7 @@ def main():
 
     results = []
     for tag, sw, w_perc, w_rec, w_x0, w_fill, w_roll, roll_w_edge in LOSS_CONFIGS:
-        print("\n############################################################")
-        print("### 损失消融配置: %s" % tag)
-        print("############################################################")
+        print("loss ablation: %s" % tag)
 
         ckpt_path = ckpt_dir / ("%s.pth" % tag)
         torch.manual_seed(args.seed)
@@ -247,8 +209,6 @@ def main():
         diff = SkeletonDiffusion(
             model, w_edge=sw[0], w_occ=sw[1], w_skel=sw[2]).to(device)
         if ckpt_path.exists():
-            # 断点续跑：该配置已训练并存过权重，直接加载，只重跑便宜的评估
-            # load_ckpt 返回 (config, epoch, best_psnr)
             _cfg0, ep0, bp0 = load_ckpt(str(ckpt_path), diff, device)
             print("RESUME: checkpoint exists, skip training (ep %d, "
                   "best %.3f)" % (ep0, bp0))
@@ -301,14 +261,12 @@ def main():
                       % (ep, running / max(1, nb), skipped,
                          time.time() - t0), flush=True)
 
-        # --- 简单合成 GT 集 ---
         p, s, d, holes, burr, specks, pred = evaluate(
             diff, val_x0, val_cond, args.sample_steps, device)
         print("  [SYNTH-GT %s] PSNR %.3f  SSIM %.3f  Dice %.3f  holes %.2f  "
               "burr %.4f  specks %.2f"
               % (tag, p, s, d, holes, burr, specks), flush=True)
 
-        # --- 真实甲骨拓片域（无 GT）---
         rh, rb, rs, real_grid = evaluate_real(
             diff, real_files, args.sample_steps, device, args.hr_size,
             args.seed, batch_size=args.real_batch)
@@ -317,7 +275,6 @@ def main():
         if real_grid is not None:
             cv2.imwrite(str(out_dir / ("real_%s_grid.png" % tag)), real_grid)
 
-        # --- 存该配置 checkpoint（仅新训练的配置；续跑的已存在，不重写）---
         if not ckpt_path.exists():
             model_config = {
                 "geom_ch": 2, "app_ch": 2, "base_ch": 64,
@@ -347,16 +304,16 @@ def main():
                   encoding="utf-8") as fh:
             json.dump(results, fh, ensure_ascii=False, indent=2)
 
-    print("\n================ 表6a：简单合成 GT 集（已饱和，对照） ================")
-    print("| 损失配置 | PSNR↑ | SSIM↑ | Dice↑ | holes↓ | burr↓ | specks↓ |")
+    print("\n================ Table 6a: simple synthetic GT set (saturated, control) ================")
+    print("| loss configuration | PSNR | SSIM | Dice | holes | burr | specks |")
     print("|---|---|---|---|---|---|---|")
     for r in results:
         print("| %s | %.3f | %.3f | %.3f | %.2f | %.4f | %.2f |"
               % (r["config"], r["psnr"], r["ssim"], r["dice"],
                  r["holes"], r["burr"], r["specks"]))
 
-    print("\n================ 表6b：真实甲骨拓片域（无 GT，领域指标） ================")
-    print("| 损失配置 | holes↓ | burr↓ | specks↓ |")
+    print("\n================ Table 6b: real rubbing domain (no GT, in-domain metrics) ================")
+    print("| loss configuration | holes | burr | specks |")
     print("|---|---|---|---|")
     for r in results:
         print("| %s | %.2f | %.4f | %.2f |"

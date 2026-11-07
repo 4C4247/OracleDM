@@ -1,11 +1,3 @@
-"""Calibrated degradation for oracle characters.
-
-Reproduces the real OBI pipeline: a clean HR image is blurred, area-downsampled
-to a tiny LR, partially dilated (rubbing ink spread), given a gentle contrast
-gain and brightness bias, and lightly noised. The LR is then upscaled to the
-working low-resolution size (64), matching ``OBI_BlackLow_64``.
-"""
-
 from typing import Tuple
 
 import torch
@@ -14,7 +6,6 @@ import torch.nn.functional as F
 
 
 def normalize_unit_range(x: torch.Tensor) -> torch.Tensor:
-    """Map a tensor to [0, 1] by its own min/max when out of range."""
     if x.min() < 0.0 or x.max() > 1.0:
         lo = x.amin(dim=(-2, -1), keepdim=True)
         hi = x.amax(dim=(-2, -1), keepdim=True)
@@ -31,7 +22,6 @@ def gaussian_kernel(kernel_size: int, sigma: float, device, dtype) -> torch.Tens
 
 
 class OracleDegradation(nn.Module):
-    """Degradation calibrated to the real OBI LR statistics."""
 
     def __init__(
         self,
@@ -65,7 +55,6 @@ class OracleDegradation(nn.Module):
 
     def to_lr(self, image: torch.Tensor, target_size: int = 16,
               deterministic: bool = False) -> torch.Tensor:
-        """HR -> tiny LR (``target_size``), values in [0, 1]."""
         image = normalize_unit_range(image)
         src_size = image.shape[-1]
         scale = src_size / 256.0
@@ -94,7 +83,6 @@ class OracleDegradation(nn.Module):
 
     def forward(self, image: torch.Tensor, lr_size: int = 16,
                 low_size: int = 64, deterministic: bool = False) -> torch.Tensor:
-        """HR -> LR (``lr_size``) -> upscaled working low-res (``low_size``)."""
         lr = self.to_lr(image, target_size=lr_size, deterministic=deterministic)
         if low_size == lr_size:
             return lr

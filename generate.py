@@ -1,9 +1,3 @@
-"""Generate reconstructed oracle images from the real low-res OBI set.
-
-For each low-res image: upscale, extract the skeleton, run the diffusion to
-generate a 128x128 oracle image, and save. Also writes a before/after montage.
-"""
-
 import argparse
 import random
 from pathlib import Path
@@ -102,12 +96,10 @@ def main():
         if args.solidify:
             p = solidify(p, close_px=args.solidify_close,
                          max_hole=args.solidify_hole)
-        # solidified output is binary -> lossless PNG keeps edges crisp
         out_name = (f.stem + ".png") if args.solidify else f.name
         cv2.imwrite(str(out_dir / "recon" / out_name), p)
         pairs.append((up, p))
 
-    # montage: before / after
     cols = min(5, len(pairs))
     rows_n = int(np.ceil(len(pairs) / cols))
     before = np.vstack([np.hstack([pairs[i*cols+j][0]

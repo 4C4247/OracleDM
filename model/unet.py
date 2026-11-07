@@ -1,19 +1,3 @@
-"""SkeletonDiff v3 - Conditional U-Net with geometry + appearance injection.
-
-The noisy image drives the main U-Net. Two parallel condition encoders supply
-multi-scale features that are ADDED at every encoder level, the bottleneck and
-every decoder level:
-
-  geometry encoder   <- cond[:2] = (skeleton, confidence)
-                         pins the stroke layout; confidence tells where the
-                         skeleton is trustworthy (low => completion allowed)
-  appearance encoder <- cond[2:4] = (stroke width map, soft LR appearance)
-                         carries this input's thickness / ink / edge style
-
-Input : noisy image (1ch) + 4-channel condition pack (passed separately).
-Output: predicted noise (1ch).
-"""
-
 import math
 
 import torch
@@ -58,7 +42,6 @@ class ResBlock(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    """Residual conv block without time embedding (condition encoders)."""
 
     def __init__(self, in_ch, out_ch, groups=8):
         super().__init__()
@@ -98,7 +81,6 @@ class Upsample(nn.Module):
 
 
 class ConditionEncoder(nn.Module):
-    """Parallel encoder producing a condition feature at every resolution."""
 
     def __init__(self, in_ch, base_ch, ch_mult):
         super().__init__()
@@ -139,10 +121,8 @@ class CondUNet(nn.Module):
         self.time_mlp = nn.Sequential(
             nn.Linear(base_ch, time_dim), nn.SiLU(), nn.Linear(time_dim, time_dim))
 
-        # main image stream (noisy image only)
         self.input = nn.Conv2d(in_ch, base_ch, 3, padding=1)
 
-        # two parallel condition streams
         self.geom_encoder = ConditionEncoder(geom_ch, base_ch, ch_mult)
         self.app_encoder = ConditionEncoder(app_ch, base_ch, ch_mult)
         self.geom_down = nn.ModuleList(
@@ -158,7 +138,6 @@ class CondUNet(nn.Module):
         self.app_up = nn.ModuleList(
             [nn.Conv2d(base_ch * m, base_ch * m, 1) for m in reversed(ch_mult)])
 
-        # encoder
         self.downs = nn.ModuleList()
         self.down_samples = nn.ModuleList()
         chs = [base_ch]
@@ -180,7 +159,6 @@ class CondUNet(nn.Module):
         self.mid1 = ResBlock(ch, ch, time_dim, dropout=dropout)
         self.mid2 = ResBlock(ch, ch, time_dim, dropout=dropout)
 
-        # decoder
         self.up_blocks = nn.ModuleList()
         self.up_samples = nn.ModuleList()
         for level in reversed(range(self.n_levels)):
@@ -206,7 +184,6 @@ class CondUNet(nn.Module):
         a = self.app_encoder(cond[:, self.geom_ch:
                                  self.geom_ch + self.app_ch])
 
-        # encoder
         x = self.input(x)
         hs = [x]
         for level, (blocks, sample) in enumerate(
@@ -221,12 +198,10 @@ class CondUNet(nn.Module):
                 x = sample(x)
                 hs.append(x)
 
-        # bottleneck
         x = self.mid1(x, t_emb)
         x = x + self.geom_mid(g[-1]) + self.app_mid(a[-1])
         x = self.mid2(x, t_emb)
 
-        # decoder
         for rev, blocks in enumerate(self.up_blocks):
             level = self.n_levels - 1 - rev
             for block in blocks:
