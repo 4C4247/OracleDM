@@ -36,7 +36,6 @@ The code is tested with Python 3.10, PyTorch 2.1.1 and CUDA 12.1 (a CUDA-capable
 ```bash
 ## Git clone this repository
 git clone https://github.com/4C4247/Oracle_DM.git
-cd Oracle_SkeletonDiff_v3
 
 ## Create a new anaconda environment
 conda create -n OracleDM python=3.10 -y
