@@ -82,7 +82,7 @@ python generate.py \
   --out-dir outputs/results --device cuda \
   --steps 25 --guidance-scale 1.0 --seed 42
 ```
-Download: [Google Drive]() — _replace this placeholder with a public shared link before release._
+Google Drive (code and pretrained models): https://drive.google.com/drive/my-drive
 
 ## 📚 Datasets
 
