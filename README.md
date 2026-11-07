@@ -82,9 +82,6 @@ Google Drive (code and pretrained models): https://drive.google.com/drive/my-dri
 
 Datasets:Google Drive (code and pretrained models): https://drive.google.com/drive/my-drive
 
-## 🔎 Overview of OracleDM
-
-![OracleDM architecture](paper/Paper_Final/figures/Final_framework.drawio.png)
 
 ## Abstract
 
@@ -92,9 +89,9 @@ Oracle bone inscriptions are among the earliest known Chinese writing systems, b
 
 ## 📊 Visual effect preview
 
-![In-domain qualitative comparison](paper/Paper_Final/figures/fig2_qualitative_indomain.png)
+![In-domain qualitative comparison](fig_stage_compare_redbox.png)
 
-![Real rubbing reconstruction](paper/Paper_Final/figures/fig3_real_rubbings.png)
+![Quality](fig2_qualitative_indomain.png)
 
 ## Citation
 
