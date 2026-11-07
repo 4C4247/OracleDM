@@ -56,28 +56,19 @@ All learning-based models use the same training data and the same compound degra
 **Stage 1 — structural formation**
 
 ```bash
-python train.py \
-  --train-dir <path/to/train> --val-dir <path/to/val> \
-  --out-dir outputs/stage1 --device cuda --epochs 200
+python train.py
 ```
 
 **Stage 2 — glyph identity**
 
 ```bash
-python train_stage2.py \
-  --resume outputs/stage1/checkpoints/best.pth \
-  --glyph-encoder outputs/glyph_encoder/glyph_encoder.pth \
-  --out-dir outputs/stage2 --device cuda
+python train_stage2.py
 ```
 
 **Stage 3 — edge refinement** (edge-quality and trajectory losses on the model's own DDIM path)
 
 ```bash
-python train_stage2.py \
-  --resume <path/to/stage2/best.pth> \
-  --glyph-encoder outputs/glyph_encoder/glyph_encoder.pth \
-  --w-edge-roll 0.5 \
-  --out-dir outputs/stage3 --device cuda
+python train_stage2.py
 ```
 
 ## How to inference
@@ -91,6 +82,7 @@ python generate.py \
   --out-dir outputs/results --device cuda \
   --steps 25 --guidance-scale 1.0 --seed 42
 ```
+Download: [Google Drive]() — _replace this placeholder with a public shared link before release._
 
 ## 📚 Datasets
 
