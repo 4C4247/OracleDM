@@ -49,35 +49,6 @@ pip install torch==2.1.1 torchvision==0.16.1 --index-url https://download.pytorc
 pip install numpy opencv-python scikit-image tqdm pillow flask matplotlib
 ```
 
-## 📂 Repository structure
-
-The project uses a flat layout; scripts are grouped by function below.
-
-```
-Oracle_SkeletonDiff_v3/
-├─ unet.py            # CondUNet: single grayscale backbone, base 64, ch_mult (1,2,2,4)
-├─ condition.py       # Four-channel condition pack (skeleton/confidence/width/appearance)
-├─ diffusion.py       # DDPM/DDIM, structural/edge/trajectory losses
-├─ postprocess.py     # Speck removal, adaptive deburr, solidification
-├─ glyph_net.py       # Oracle-241 glyph classifier (241 classes, GroupNorm, not VGG)
-├─ skeleton.py        # Zhang–Suen thinning and stroke-level utilities
-├─ data.py            # Training/validation dataset and tensor helpers
-├─ degradation.py     # Compound degradation model
-├─ glyph_data.py      # Oracle-241 glyph dataset preprocessing
-├─ train.py           # Stage 1: structural formation
-├─ train_glyph.py     # Oracle-241 classifier/encoder training
-├─ train_stage2.py    # Stage 2 (identity) and Stage 3 (edge, via --w-edge-roll)
-├─ generate.py        # Command-line batch inference
-├─ eval.py            # Full-reference evaluation (PSNR/SSIM/Dice/holes)
-├─ eval_unseen.py     # Held-out unseen-glyph evaluation
-├─ eval_real16.py     # No-reference evaluation on real 16x16 rubbings
-├─ ablation_cond.py   # Condition-module ablation
-├─ ablation_loss.py   # Loss/degradation ablation
-├─ utils.py           # Metrics, checkpoints and grid helpers
-├─ webapp/            # Fully offline Flask + Vue local website
-└─ outputs/           # Checkpoints and evaluation outputs
-```
-
 ## How to train
 
 All learning-based models use the same training data and the same compound degradation; adjust the paths in the commands to your environment.
@@ -88,14 +59,6 @@ All learning-based models use the same training data and the same compound degra
 python train.py \
   --train-dir <path/to/train> --val-dir <path/to/val> \
   --out-dir outputs/stage1 --device cuda --epochs 200
-```
-
-**Oracle-241 glyph classifier (auxiliary identity encoder)**
-
-```bash
-python train_glyph.py \
-  --handprint-dir <Oracle-241/handprint> --scan-dir <Oracle-241/scan/scanned> \
-  --out-dir outputs/glyph_encoder --device cuda
 ```
 
 **Stage 2 — glyph identity**
@@ -128,28 +91,6 @@ python generate.py \
   --out-dir outputs/results --device cuda \
   --steps 25 --guidance-scale 1.0 --seed 42
 ```
-
-**Local website (no command line needed)** — fully offline, runs on the local GPU:
-
-```bash
-cd webapp
-start_web.bat        # then open http://127.0.0.1:7860
-```
-
-The website supports drag-and-drop upload, parameter tuning, a four-panel before/after view, condition-channel diagnostics, and a same-image Stage1/2/3 comparison.
-
-## 📦 Pretrained models
-
-Place the checkpoints under `outputs/` as follows. The three stage models are used for the stage ablation; **production inference requires only Stage 3**.
-
-| Checkpoint | Location | Size |
-|---|---|---|
-| Stage 1 (`stage1_final_ep69.pth`) | `outputs/different_stage_final_checkpoint/` | 79.7 MB |
-| Stage 2 (`stage2_final_ep10.pth`) | `outputs/different_stage_final_checkpoint/` | 79.7 MB |
-| Stage 3 (`stage3_final_ep4.pth`) | `outputs/different_stage_final_checkpoint/` | 79.7 MB |
-| Oracle-241 encoder (`glyph_encoder.pth`) | `outputs/glyph_encoder/` | 15.8 MB |
-
-Download: [Google Drive]() — _replace this placeholder with a public shared link before release._
 
 ## 📚 Datasets
 
